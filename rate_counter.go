@@ -239,20 +239,20 @@ func (this *RateCounterSnapshot) Snapshot() RateCounter {
 
 type NilRateCounter struct {}
 
-func (this *NilRateCounter)	Mark(int64) {
+func (this NilRateCounter)	Mark(int64) {
 }
 
-func (this *NilRateCounter)		Count() int64 {
+func (this NilRateCounter)		Count() int64 {
 	return 0
 }
 
-func (this *NilRateCounter)		Rate1() float64 {
+func (this NilRateCounter)		Rate1() float64 {
 	return 0
 }
 
-func (this *NilRateCounter)		Clear() {
+func (this NilRateCounter)		Clear() {
 }
 
-func (this *NilRateCounter)Snapshot() RateCounter {
-	return &NilRateCounter{}
+func (this NilRateCounter)Snapshot() RateCounter {
+	return NilRateCounter{}
 }
