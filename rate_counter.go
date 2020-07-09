@@ -10,8 +10,11 @@ import (
 //go:generate counterfeiter . RateCounter
 type RateCounter interface {
 	Mark(int64)
+	// Count() returns the total count up to the last full sampling period.
+	// It is at par with Rate1() which doesn't compute the rate on the current sampling period. rate(meter) = meter.1m in MonViz.
 	Count() int64
 	Rate1() float64
+	CountTotal() int64 // returns the total count ever (including the current sampling period), this is especially useful for tests.
 	Clear()
 	Snapshot() RateCounter
 }
@@ -23,7 +26,7 @@ type RateCounter interface {
 type StandardRateCounter struct {
 	clock clock.Clock
 
-	counter        int64
+	counter        int64 // lastCount "lags behind" by a sample period by design, this one really counts all events.
 	samplePeriodMs int64
 	windowSizeMs   int64
 
@@ -114,10 +117,15 @@ func (this *StandardRateCounter) Rate1() float64 {
 }
 
 func (this *StandardRateCounter) Count() int64 {
-	this.maybeSampleCount()
 	this.lock.RLock()
 	defer this.lock.RUnlock()
 	return this.lastCount
+}
+
+func (this *StandardRateCounter) CountTotal() int64 {
+	this.lock.RLock()
+	defer this.lock.RUnlock()
+	return this.counter
 }
 
 func (this *StandardRateCounter) Snapshot() RateCounter {
@@ -145,7 +153,7 @@ func (this *StandardRateCounter) advance(index int) int {
  * should not matter in practice.
  */
 func (this *StandardRateCounter) maybeSampleCount() {
-	var currentTimeMs int64 = this.clock.Now().UnixNano() / 1e6
+	currentTimeMs := this.clock.Now().UnixNano() / 1e6
 	currentSampleTimeMs := this.roundTime(currentTimeMs)
 
 	this.lock.RLock()
@@ -225,6 +233,10 @@ func (this *RateCounterSnapshot) Count() int64 {
 	return this.count
 }
 
+func (this *RateCounterSnapshot) CountTotal() int64 {
+	return this.count
+}
+
 func (this *RateCounterSnapshot) Rate1() float64 {
 	return this.rate
 }
@@ -237,22 +249,26 @@ func (this *RateCounterSnapshot) Snapshot() RateCounter {
 	return this
 }
 
-type NilRateCounter struct {}
+type NilRateCounter struct{}
 
-func (this NilRateCounter)	Mark(int64) {
+func (this NilRateCounter) Mark(int64) {
 }
 
-func (this NilRateCounter)		Count() int64 {
+func (this NilRateCounter) Count() int64 {
 	return 0
 }
 
-func (this NilRateCounter)		Rate1() float64 {
+func (this NilRateCounter) Rate1() float64 {
 	return 0
 }
 
-func (this NilRateCounter)		Clear() {
+func (this NilRateCounter) CountTotal() int64 {
+	return 0
 }
 
-func (this NilRateCounter)Snapshot() RateCounter {
+func (this NilRateCounter) Clear() {
+}
+
+func (this NilRateCounter) Snapshot() RateCounter {
 	return NilRateCounter{}
 }
