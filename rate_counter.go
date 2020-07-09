@@ -10,11 +10,10 @@ import (
 //go:generate counterfeiter . RateCounter
 type RateCounter interface {
 	Mark(int64)
-	// Count() returns the total count up to the last full sampling period.
-	// It is at par with Rate1() which doesn't compute the rate on the current sampling period. rate(meter) = meter.1m in MonViz.
+	// Rate1() returns the rate up to the last full sampling period, so at time 5.3s it will only return the rate on [0, 5].
+	// Count() returns the total count ever, including the current sampling period.
 	Count() int64
 	Rate1() float64
-	CountTotal() int64 // returns the total count ever (including the current sampling period), this is especially useful for tests.
 	Clear()
 	Snapshot() RateCounter
 }
@@ -119,12 +118,6 @@ func (this *StandardRateCounter) Rate1() float64 {
 func (this *StandardRateCounter) Count() int64 {
 	this.lock.RLock()
 	defer this.lock.RUnlock()
-	return this.lastCount
-}
-
-func (this *StandardRateCounter) CountTotal() int64 {
-	this.lock.RLock()
-	defer this.lock.RUnlock()
 	return this.counter
 }
 
@@ -134,7 +127,7 @@ func (this *StandardRateCounter) Snapshot() RateCounter {
 	defer this.lock.RUnlock()
 
 	return &RateCounterSnapshot{
-		count: this.lastCount,
+		count: this.counter,
 		rate:  this.lastRate,
 	}
 }
@@ -233,10 +226,6 @@ func (this *RateCounterSnapshot) Count() int64 {
 	return this.count
 }
 
-func (this *RateCounterSnapshot) CountTotal() int64 {
-	return this.count
-}
-
 func (this *RateCounterSnapshot) Rate1() float64 {
 	return this.rate
 }
@@ -259,10 +248,6 @@ func (this NilRateCounter) Count() int64 {
 }
 
 func (this NilRateCounter) Rate1() float64 {
-	return 0
-}
-
-func (this NilRateCounter) CountTotal() int64 {
 	return 0
 }
 
