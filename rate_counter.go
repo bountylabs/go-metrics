@@ -25,7 +25,9 @@ type RateCounter interface {
 type StandardRateCounter struct {
 	clock clock.Clock
 
-	counter        int64 // lastCount "lags behind" by a sample period by design, this one really counts all events.
+	// lastCount "lags behind" by a sample period by design, this one really counts all events so far.
+	// Note that lastCount is at par with lastRate, so that in MonViz rate(meter.lastCount) = meter.lastRate
+	counter        int64
 	samplePeriodMs int64
 	windowSizeMs   int64
 
