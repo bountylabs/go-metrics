@@ -84,60 +84,60 @@ func NewStandardRateCounter(numSamples int64, samplePeriodMs int64, clock clock.
 	return rc
 }
 
-func (srCounter *StandardRateCounter) Clear() {
-	srCounter.lock.Lock()
-	defer srCounter.lock.Unlock()
+func (sRC *StandardRateCounter) Clear() {
+	sRC.lock.Lock()
+	defer sRC.lock.Unlock()
 
-	atomic.StoreInt64(&srCounter.counter, 0)
+	atomic.StoreInt64(&sRC.counter, 0)
 
-	resetTimeMs := srCounter.clock.Now().UnixNano() / 1e6
-	for i, _ := range srCounter.timestampsMs {
-		srCounter.timestampsMs[i] = resetTimeMs
-		srCounter.counts[i] = 0
+	resetTimeMs := sRC.clock.Now().UnixNano() / 1e6
+	for i, _ := range sRC.timestampsMs {
+		sRC.timestampsMs[i] = resetTimeMs
+		sRC.counts[i] = 0
 	}
 
-	srCounter.lastSampleTimeMs = resetTimeMs
-	srCounter.lastRate = 0.0
-	srCounter.lastCount = 0
+	sRC.lastSampleTimeMs = resetTimeMs
+	sRC.lastRate = 0.0
+	sRC.lastCount = 0
 
 	// Head and tail never point to the same index.
-	srCounter.headIndex = 0
-	srCounter.tailIndex = len(srCounter.timestampsMs) - 1
+	sRC.headIndex = 0
+	sRC.tailIndex = len(sRC.timestampsMs) - 1
 }
 
-func (srCounter *StandardRateCounter) Mark(n int64) {
-	atomic.AddInt64(&srCounter.counter, n)
-	srCounter.maybeSampleCount()
+func (sRC *StandardRateCounter) Mark(n int64) {
+	atomic.AddInt64(&sRC.counter, n)
+	sRC.maybeSampleCount()
 }
 
-func (srCounter *StandardRateCounter) Rate1() float64 {
-	srCounter.maybeSampleCount()
-	srCounter.lock.RLock()
-	defer srCounter.lock.RUnlock()
-	return srCounter.lastRate
+func (sRC *StandardRateCounter) Rate1() float64 {
+	sRC.maybeSampleCount()
+	sRC.lock.RLock()
+	defer sRC.lock.RUnlock()
+	return sRC.lastRate
 }
 
-func (srCounter *StandardRateCounter) Count() int64 {
-	return atomic.LoadInt64(&srCounter.counter)
+func (sRC *StandardRateCounter) Count() int64 {
+	return atomic.LoadInt64(&sRC.counter)
 }
 
-func (srCounter *StandardRateCounter) Snapshot() RateCounter {
-	srCounter.maybeSampleCount()
-	srCounter.lock.RLock()
-	defer srCounter.lock.RUnlock()
+func (sRC *StandardRateCounter) Snapshot() RateCounter {
+	sRC.maybeSampleCount()
+	sRC.lock.RLock()
+	defer sRC.lock.RUnlock()
 
 	return &RateCounterSnapshot{
-		count: atomic.LoadInt64(&srCounter.counter),
-		rate:  srCounter.lastRate,
+		count: atomic.LoadInt64(&sRC.counter),
+		rate:  sRC.lastRate,
 	}
 }
 
-func (srCounter *StandardRateCounter) roundTime(timeMs int64) int64 {
-	return timeMs - (timeMs % srCounter.samplePeriodMs)
+func (sRC *StandardRateCounter) roundTime(timeMs int64) int64 {
+	return timeMs - (timeMs % sRC.samplePeriodMs)
 }
 
-func (srCounter *StandardRateCounter) advance(index int) int {
-	return (index + 1) % len(srCounter.counts)
+func (sRC *StandardRateCounter) advance(index int) int {
+	return (index + 1) % len(sRC.counts)
 }
 
 /**
@@ -145,23 +145,23 @@ func (srCounter *StandardRateCounter) advance(index int) int {
  * algorithm, but given that we are computing a rate over a ring buffer of 60 samples, it
  * should not matter in practice.
  */
-func (srCounter *StandardRateCounter) maybeSampleCount() {
-	currentTimeMs := srCounter.clock.Now().UnixNano() / 1e6
-	currentSampleTimeMs := srCounter.roundTime(currentTimeMs)
+func (sRC *StandardRateCounter) maybeSampleCount() {
+	currentTimeMs := sRC.clock.Now().UnixNano() / 1e6
+	currentSampleTimeMs := sRC.roundTime(currentTimeMs)
 
-	srCounter.lock.RLock()
-	toSample := currentSampleTimeMs > srCounter.lastSampleTimeMs
-	srCounter.lock.RUnlock()
+	sRC.lock.RLock()
+	toSample := currentSampleTimeMs > sRC.lastSampleTimeMs
+	sRC.lock.RUnlock()
 
 	if !toSample {
 		return
 	}
 
-	srCounter.lock.Lock()
-	defer srCounter.lock.Unlock()
+	sRC.lock.Lock()
+	defer sRC.lock.Unlock()
 
-	if currentSampleTimeMs > srCounter.lastSampleTimeMs {
-		srCounter.sampleCountAndUpdateRate(currentSampleTimeMs)
+	if currentSampleTimeMs > sRC.lastSampleTimeMs {
+		sRC.sampleCountAndUpdateRate(currentSampleTimeMs)
 	}
 }
 
@@ -169,46 +169,46 @@ func (srCounter *StandardRateCounter) maybeSampleCount() {
  * Records a new sample to the ring buffer, advances head and tail if necessary, and
  * recomputes the rate.
  */
-func (srCounter *StandardRateCounter) sampleCountAndUpdateRate(currentSampleTimeMs int64) {
+func (sRC *StandardRateCounter) sampleCountAndUpdateRate(currentSampleTimeMs int64) {
 	// Record newest up to date second sample time.  Clear rate.
-	srCounter.lastSampleTimeMs = currentSampleTimeMs
+	sRC.lastSampleTimeMs = currentSampleTimeMs
 
 	// Advance head and write values.
-	srCounter.headIndex = srCounter.advance(srCounter.headIndex)
-	srCounter.timestampsMs[srCounter.headIndex] = currentSampleTimeMs
+	sRC.headIndex = sRC.advance(sRC.headIndex)
+	sRC.timestampsMs[sRC.headIndex] = currentSampleTimeMs
 
-	srCounter.lastCount = atomic.LoadInt64(&srCounter.counter)
-	srCounter.counts[srCounter.headIndex] = srCounter.lastCount
+	sRC.lastCount = atomic.LoadInt64(&sRC.counter)
+	sRC.counts[sRC.headIndex] = sRC.lastCount
 
 	// Ensure tail is always ahead of head.
-	if srCounter.tailIndex == srCounter.headIndex {
-		srCounter.tailIndex = srCounter.advance(srCounter.tailIndex)
+	if sRC.tailIndex == sRC.headIndex {
+		sRC.tailIndex = sRC.advance(sRC.tailIndex)
 	}
 
 	// Advance the 'tail' to the newest sample which is at least windowTimeMs old.
 	for {
-		nextWindowStart := srCounter.advance(srCounter.tailIndex)
-		if nextWindowStart == srCounter.headIndex ||
-			srCounter.timestampsMs[srCounter.headIndex]-srCounter.timestampsMs[nextWindowStart] < srCounter.windowSizeMs {
+		nextWindowStart := sRC.advance(sRC.tailIndex)
+		if nextWindowStart == sRC.headIndex ||
+			sRC.timestampsMs[sRC.headIndex]-sRC.timestampsMs[nextWindowStart] < sRC.windowSizeMs {
 			break
 		}
-		srCounter.tailIndex = nextWindowStart
+		sRC.tailIndex = nextWindowStart
 	}
 
-	timeDeltaMs := srCounter.timestampsMs[srCounter.headIndex] - srCounter.timestampsMs[srCounter.tailIndex]
+	timeDeltaMs := sRC.timestampsMs[sRC.headIndex] - sRC.timestampsMs[sRC.tailIndex]
 	if timeDeltaMs == 0 {
-		srCounter.lastRate = 0.0
+		sRC.lastRate = 0.0
 	} else {
-		if timeDeltaMs > srCounter.windowSizeMs {
-			timeDeltaMs = srCounter.windowSizeMs
+		if timeDeltaMs > sRC.windowSizeMs {
+			timeDeltaMs = sRC.windowSizeMs
 		}
 
 		deltaTimeSecs := timeDeltaMs / 1000.0
-		deltaCount := srCounter.counts[srCounter.headIndex] - srCounter.counts[srCounter.tailIndex]
+		deltaCount := sRC.counts[sRC.headIndex] - sRC.counts[sRC.tailIndex]
 		if deltaTimeSecs <= 0.0 {
-			srCounter.lastRate = 0
+			sRC.lastRate = 0
 		} else {
-			srCounter.lastRate = float64(deltaCount) / float64(deltaTimeSecs)
+			sRC.lastRate = float64(deltaCount) / float64(deltaTimeSecs)
 		}
 	}
 }
