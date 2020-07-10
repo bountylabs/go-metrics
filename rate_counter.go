@@ -84,60 +84,60 @@ func NewStandardRateCounter(numSamples int64, samplePeriodMs int64, clock clock.
 	return rc
 }
 
-func (sRC *StandardRateCounter) Clear() {
-	sRC.lock.Lock()
-	defer sRC.lock.Unlock()
+func (src *StandardRateCounter) Clear() {
+	src.lock.Lock()
+	defer src.lock.Unlock()
 
-	atomic.StoreInt64(&sRC.counter, 0)
+	atomic.StoreInt64(&src.counter, 0)
 
-	resetTimeMs := sRC.clock.Now().UnixNano() / 1e6
-	for i, _ := range sRC.timestampsMs {
-		sRC.timestampsMs[i] = resetTimeMs
-		sRC.counts[i] = 0
+	resetTimeMs := src.clock.Now().UnixNano() / 1e6
+	for i, _ := range src.timestampsMs {
+		src.timestampsMs[i] = resetTimeMs
+		src.counts[i] = 0
 	}
 
-	sRC.lastSampleTimeMs = resetTimeMs
-	sRC.lastRate = 0.0
-	sRC.lastCount = 0
+	src.lastSampleTimeMs = resetTimeMs
+	src.lastRate = 0.0
+	src.lastCount = 0
 
 	// Head and tail never point to the same index.
-	sRC.headIndex = 0
-	sRC.tailIndex = len(sRC.timestampsMs) - 1
+	src.headIndex = 0
+	src.tailIndex = len(src.timestampsMs) - 1
 }
 
-func (sRC *StandardRateCounter) Mark(n int64) {
-	atomic.AddInt64(&sRC.counter, n)
-	sRC.maybeSampleCount()
+func (src *StandardRateCounter) Mark(n int64) {
+	atomic.AddInt64(&src.counter, n)
+	src.maybeSampleCount()
 }
 
-func (sRC *StandardRateCounter) Rate1() float64 {
-	sRC.maybeSampleCount()
-	sRC.lock.RLock()
-	defer sRC.lock.RUnlock()
-	return sRC.lastRate
+func (src *StandardRateCounter) Rate1() float64 {
+	src.maybeSampleCount()
+	src.lock.RLock()
+	defer src.lock.RUnlock()
+	return src.lastRate
 }
 
-func (sRC *StandardRateCounter) Count() int64 {
-	return atomic.LoadInt64(&sRC.counter)
+func (src *StandardRateCounter) Count() int64 {
+	return atomic.LoadInt64(&src.counter)
 }
 
-func (sRC *StandardRateCounter) Snapshot() RateCounter {
-	sRC.maybeSampleCount()
-	sRC.lock.RLock()
-	defer sRC.lock.RUnlock()
+func (src *StandardRateCounter) Snapshot() RateCounter {
+	src.maybeSampleCount()
+	src.lock.RLock()
+	defer src.lock.RUnlock()
 
 	return &RateCounterSnapshot{
-		count: atomic.LoadInt64(&sRC.counter),
-		rate:  sRC.lastRate,
+		count: atomic.LoadInt64(&src.counter),
+		rate:  src.lastRate,
 	}
 }
 
-func (sRC *StandardRateCounter) roundTime(timeMs int64) int64 {
-	return timeMs - (timeMs % sRC.samplePeriodMs)
+func (src *StandardRateCounter) roundTime(timeMs int64) int64 {
+	return timeMs - (timeMs % src.samplePeriodMs)
 }
 
-func (sRC *StandardRateCounter) advance(index int) int {
-	return (index + 1) % len(sRC.counts)
+func (src *StandardRateCounter) advance(index int) int {
+	return (index + 1) % len(src.counts)
 }
 
 /**
@@ -145,23 +145,23 @@ func (sRC *StandardRateCounter) advance(index int) int {
  * algorithm, but given that we are computing a rate over a ring buffer of 60 samples, it
  * should not matter in practice.
  */
-func (sRC *StandardRateCounter) maybeSampleCount() {
-	currentTimeMs := sRC.clock.Now().UnixNano() / 1e6
-	currentSampleTimeMs := sRC.roundTime(currentTimeMs)
+func (src *StandardRateCounter) maybeSampleCount() {
+	currentTimeMs := src.clock.Now().UnixNano() / 1e6
+	currentSampleTimeMs := src.roundTime(currentTimeMs)
 
-	sRC.lock.RLock()
-	toSample := currentSampleTimeMs > sRC.lastSampleTimeMs
-	sRC.lock.RUnlock()
+	src.lock.RLock()
+	toSample := currentSampleTimeMs > src.lastSampleTimeMs
+	src.lock.RUnlock()
 
 	if !toSample {
 		return
 	}
 
-	sRC.lock.Lock()
-	defer sRC.lock.Unlock()
+	src.lock.Lock()
+	defer src.lock.Unlock()
 
-	if currentSampleTimeMs > sRC.lastSampleTimeMs {
-		sRC.sampleCountAndUpdateRate(currentSampleTimeMs)
+	if currentSampleTimeMs > src.lastSampleTimeMs {
+		src.sampleCountAndUpdateRate(currentSampleTimeMs)
 	}
 }
 
@@ -169,46 +169,46 @@ func (sRC *StandardRateCounter) maybeSampleCount() {
  * Records a new sample to the ring buffer, advances head and tail if necessary, and
  * recomputes the rate.
  */
-func (sRC *StandardRateCounter) sampleCountAndUpdateRate(currentSampleTimeMs int64) {
+func (src *StandardRateCounter) sampleCountAndUpdateRate(currentSampleTimeMs int64) {
 	// Record newest up to date second sample time.  Clear rate.
-	sRC.lastSampleTimeMs = currentSampleTimeMs
+	src.lastSampleTimeMs = currentSampleTimeMs
 
 	// Advance head and write values.
-	sRC.headIndex = sRC.advance(sRC.headIndex)
-	sRC.timestampsMs[sRC.headIndex] = currentSampleTimeMs
+	src.headIndex = src.advance(src.headIndex)
+	src.timestampsMs[src.headIndex] = currentSampleTimeMs
 
-	sRC.lastCount = atomic.LoadInt64(&sRC.counter)
-	sRC.counts[sRC.headIndex] = sRC.lastCount
+	src.lastCount = atomic.LoadInt64(&src.counter)
+	src.counts[src.headIndex] = src.lastCount
 
 	// Ensure tail is always ahead of head.
-	if sRC.tailIndex == sRC.headIndex {
-		sRC.tailIndex = sRC.advance(sRC.tailIndex)
+	if src.tailIndex == src.headIndex {
+		src.tailIndex = src.advance(src.tailIndex)
 	}
 
 	// Advance the 'tail' to the newest sample which is at least windowTimeMs old.
 	for {
-		nextWindowStart := sRC.advance(sRC.tailIndex)
-		if nextWindowStart == sRC.headIndex ||
-			sRC.timestampsMs[sRC.headIndex]-sRC.timestampsMs[nextWindowStart] < sRC.windowSizeMs {
+		nextWindowStart := src.advance(src.tailIndex)
+		if nextWindowStart == src.headIndex ||
+			src.timestampsMs[src.headIndex]-src.timestampsMs[nextWindowStart] < src.windowSizeMs {
 			break
 		}
-		sRC.tailIndex = nextWindowStart
+		src.tailIndex = nextWindowStart
 	}
 
-	timeDeltaMs := sRC.timestampsMs[sRC.headIndex] - sRC.timestampsMs[sRC.tailIndex]
+	timeDeltaMs := src.timestampsMs[src.headIndex] - src.timestampsMs[src.tailIndex]
 	if timeDeltaMs == 0 {
-		sRC.lastRate = 0.0
+		src.lastRate = 0.0
 	} else {
-		if timeDeltaMs > sRC.windowSizeMs {
-			timeDeltaMs = sRC.windowSizeMs
+		if timeDeltaMs > src.windowSizeMs {
+			timeDeltaMs = src.windowSizeMs
 		}
 
 		deltaTimeSecs := timeDeltaMs / 1000.0
-		deltaCount := sRC.counts[sRC.headIndex] - sRC.counts[sRC.tailIndex]
+		deltaCount := src.counts[src.headIndex] - src.counts[src.tailIndex]
 		if deltaTimeSecs <= 0.0 {
-			sRC.lastRate = 0
+			src.lastRate = 0
 		} else {
-			sRC.lastRate = float64(deltaCount) / float64(deltaTimeSecs)
+			src.lastRate = float64(deltaCount) / float64(deltaTimeSecs)
 		}
 	}
 }
