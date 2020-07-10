@@ -84,62 +84,60 @@ func NewStandardRateCounter(numSamples int64, samplePeriodMs int64, clock clock.
 	return rc
 }
 
-func (this *StandardRateCounter) Clear() {
-	this.lock.Lock()
-	defer this.lock.Unlock()
+func (srCounter *StandardRateCounter) Clear() {
+	srCounter.lock.Lock()
+	defer srCounter.lock.Unlock()
 
-	atomic.StoreInt64(&this.counter, 0)
+	atomic.StoreInt64(&srCounter.counter, 0)
 
-	resetTimeMs := this.clock.Now().UnixNano() / 1e6
-	for i, _ := range this.timestampsMs {
-		this.timestampsMs[i] = resetTimeMs
-		this.counts[i] = 0
+	resetTimeMs := srCounter.clock.Now().UnixNano() / 1e6
+	for i, _ := range srCounter.timestampsMs {
+		srCounter.timestampsMs[i] = resetTimeMs
+		srCounter.counts[i] = 0
 	}
 
-	this.lastSampleTimeMs = resetTimeMs
-	this.lastRate = 0.0
-	this.lastCount = 0
+	srCounter.lastSampleTimeMs = resetTimeMs
+	srCounter.lastRate = 0.0
+	srCounter.lastCount = 0
 
 	// Head and tail never point to the same index.
-	this.headIndex = 0
-	this.tailIndex = len(this.timestampsMs) - 1
+	srCounter.headIndex = 0
+	srCounter.tailIndex = len(srCounter.timestampsMs) - 1
 }
 
-func (this *StandardRateCounter) Mark(n int64) {
-	atomic.AddInt64(&this.counter, n)
-	this.maybeSampleCount()
+func (srCounter *StandardRateCounter) Mark(n int64) {
+	atomic.AddInt64(&srCounter.counter, n)
+	srCounter.maybeSampleCount()
 }
 
-func (this *StandardRateCounter) Rate1() float64 {
-	this.maybeSampleCount()
-	this.lock.RLock()
-	defer this.lock.RUnlock()
-	return this.lastRate
+func (srCounter *StandardRateCounter) Rate1() float64 {
+	srCounter.maybeSampleCount()
+	srCounter.lock.RLock()
+	defer srCounter.lock.RUnlock()
+	return srCounter.lastRate
 }
 
-func (this *StandardRateCounter) Count() int64 {
-	this.lock.RLock()
-	defer this.lock.RUnlock()
-	return this.counter
+func (srCounter *StandardRateCounter) Count() int64 {
+	return atomic.LoadInt64(&srCounter.counter)
 }
 
-func (this *StandardRateCounter) Snapshot() RateCounter {
-	this.maybeSampleCount()
-	this.lock.RLock()
-	defer this.lock.RUnlock()
+func (srCounter *StandardRateCounter) Snapshot() RateCounter {
+	srCounter.maybeSampleCount()
+	srCounter.lock.RLock()
+	defer srCounter.lock.RUnlock()
 
 	return &RateCounterSnapshot{
-		count: this.counter,
-		rate:  this.lastRate,
+		count: atomic.LoadInt64(&srCounter.counter),
+		rate:  srCounter.lastRate,
 	}
 }
 
-func (this *StandardRateCounter) roundTime(timeMs int64) int64 {
-	return timeMs - (timeMs % this.samplePeriodMs)
+func (srCounter *StandardRateCounter) roundTime(timeMs int64) int64 {
+	return timeMs - (timeMs % srCounter.samplePeriodMs)
 }
 
-func (this *StandardRateCounter) advance(index int) int {
-	return (index + 1) % len(this.counts)
+func (srCounter *StandardRateCounter) advance(index int) int {
+	return (index + 1) % len(srCounter.counts)
 }
 
 /**
@@ -147,23 +145,23 @@ func (this *StandardRateCounter) advance(index int) int {
  * algorithm, but given that we are computing a rate over a ring buffer of 60 samples, it
  * should not matter in practice.
  */
-func (this *StandardRateCounter) maybeSampleCount() {
-	currentTimeMs := this.clock.Now().UnixNano() / 1e6
-	currentSampleTimeMs := this.roundTime(currentTimeMs)
+func (srCounter *StandardRateCounter) maybeSampleCount() {
+	currentTimeMs := srCounter.clock.Now().UnixNano() / 1e6
+	currentSampleTimeMs := srCounter.roundTime(currentTimeMs)
 
-	this.lock.RLock()
-	toSample := currentSampleTimeMs > this.lastSampleTimeMs
-	this.lock.RUnlock()
+	srCounter.lock.RLock()
+	toSample := currentSampleTimeMs > srCounter.lastSampleTimeMs
+	srCounter.lock.RUnlock()
 
 	if !toSample {
 		return
 	}
 
-	this.lock.Lock()
-	defer this.lock.Unlock()
+	srCounter.lock.Lock()
+	defer srCounter.lock.Unlock()
 
-	if currentSampleTimeMs > this.lastSampleTimeMs {
-		this.sampleCountAndUpdateRate(currentSampleTimeMs)
+	if currentSampleTimeMs > srCounter.lastSampleTimeMs {
+		srCounter.sampleCountAndUpdateRate(currentSampleTimeMs)
 	}
 }
 
@@ -171,46 +169,46 @@ func (this *StandardRateCounter) maybeSampleCount() {
  * Records a new sample to the ring buffer, advances head and tail if necessary, and
  * recomputes the rate.
  */
-func (this *StandardRateCounter) sampleCountAndUpdateRate(currentSampleTimeMs int64) {
+func (srCounter *StandardRateCounter) sampleCountAndUpdateRate(currentSampleTimeMs int64) {
 	// Record newest up to date second sample time.  Clear rate.
-	this.lastSampleTimeMs = currentSampleTimeMs
+	srCounter.lastSampleTimeMs = currentSampleTimeMs
 
 	// Advance head and write values.
-	this.headIndex = this.advance(this.headIndex)
-	this.timestampsMs[this.headIndex] = currentSampleTimeMs
+	srCounter.headIndex = srCounter.advance(srCounter.headIndex)
+	srCounter.timestampsMs[srCounter.headIndex] = currentSampleTimeMs
 
-	this.lastCount = atomic.LoadInt64(&this.counter)
-	this.counts[this.headIndex] = this.lastCount
+	srCounter.lastCount = atomic.LoadInt64(&srCounter.counter)
+	srCounter.counts[srCounter.headIndex] = srCounter.lastCount
 
 	// Ensure tail is always ahead of head.
-	if this.tailIndex == this.headIndex {
-		this.tailIndex = this.advance(this.tailIndex)
+	if srCounter.tailIndex == srCounter.headIndex {
+		srCounter.tailIndex = srCounter.advance(srCounter.tailIndex)
 	}
 
 	// Advance the 'tail' to the newest sample which is at least windowTimeMs old.
 	for {
-		nextWindowStart := this.advance(this.tailIndex)
-		if nextWindowStart == this.headIndex ||
-			this.timestampsMs[this.headIndex]-this.timestampsMs[nextWindowStart] < this.windowSizeMs {
+		nextWindowStart := srCounter.advance(srCounter.tailIndex)
+		if nextWindowStart == srCounter.headIndex ||
+			srCounter.timestampsMs[srCounter.headIndex]-srCounter.timestampsMs[nextWindowStart] < srCounter.windowSizeMs {
 			break
 		}
-		this.tailIndex = nextWindowStart
+		srCounter.tailIndex = nextWindowStart
 	}
 
-	timeDeltaMs := this.timestampsMs[this.headIndex] - this.timestampsMs[this.tailIndex]
+	timeDeltaMs := srCounter.timestampsMs[srCounter.headIndex] - srCounter.timestampsMs[srCounter.tailIndex]
 	if timeDeltaMs == 0 {
-		this.lastRate = 0.0
+		srCounter.lastRate = 0.0
 	} else {
-		if timeDeltaMs > this.windowSizeMs {
-			timeDeltaMs = this.windowSizeMs
+		if timeDeltaMs > srCounter.windowSizeMs {
+			timeDeltaMs = srCounter.windowSizeMs
 		}
 
 		deltaTimeSecs := timeDeltaMs / 1000.0
-		deltaCount := this.counts[this.headIndex] - this.counts[this.tailIndex]
+		deltaCount := srCounter.counts[srCounter.headIndex] - srCounter.counts[srCounter.tailIndex]
 		if deltaTimeSecs <= 0.0 {
-			this.lastRate = 0
+			srCounter.lastRate = 0
 		} else {
-			this.lastRate = float64(deltaCount) / float64(deltaTimeSecs)
+			srCounter.lastRate = float64(deltaCount) / float64(deltaTimeSecs)
 		}
 	}
 }
@@ -220,42 +218,42 @@ type RateCounterSnapshot struct {
 	count int64
 }
 
-func (this *RateCounterSnapshot) Mark(n int64) {
+func (rcSnapshot *RateCounterSnapshot) Mark(n int64) {
 	panic("Mark called on RateCounterSnapshot")
 }
 
-func (this *RateCounterSnapshot) Count() int64 {
-	return this.count
+func (rcSnapshot *RateCounterSnapshot) Count() int64 {
+	return rcSnapshot.count
 }
 
-func (this *RateCounterSnapshot) Rate1() float64 {
-	return this.rate
+func (rcSnapshot *RateCounterSnapshot) Rate1() float64 {
+	return rcSnapshot.rate
 }
 
-func (this *RateCounterSnapshot) Clear() {
+func (rcSnapshot *RateCounterSnapshot) Clear() {
 	panic("Clear called on RateCounterSnapshot")
 }
 
-func (this *RateCounterSnapshot) Snapshot() RateCounter {
-	return this
+func (rcSnapshot *RateCounterSnapshot) Snapshot() RateCounter {
+	return rcSnapshot
 }
 
 type NilRateCounter struct{}
 
-func (this NilRateCounter) Mark(int64) {
+func (NilRateCounter) Mark(int64) {
 }
 
-func (this NilRateCounter) Count() int64 {
+func (NilRateCounter) Count() int64 {
 	return 0
 }
 
-func (this NilRateCounter) Rate1() float64 {
+func (NilRateCounter) Rate1() float64 {
 	return 0
 }
 
-func (this NilRateCounter) Clear() {
+func (NilRateCounter) Clear() {
 }
 
-func (this NilRateCounter) Snapshot() RateCounter {
+func (NilRateCounter) Snapshot() RateCounter {
 	return NilRateCounter{}
 }
