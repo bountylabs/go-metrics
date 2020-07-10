@@ -102,7 +102,7 @@ func TestRateAndCountInSnapshotShouldBeConsistent(t *testing.T) {
 	if v := s.Rate1(); v != 0.0 {
 		t.Errorf("s.Rate1(): 0.0 != %v\n", v)
 	}
-	if v := s.Count(); v != 0.0 {
+	if v := s.Count(); v != 1.0 {
 		t.Errorf("s.Count(): 0.0 != %v\n", v)
 	}
 
